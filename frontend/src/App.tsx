@@ -1,10 +1,10 @@
-import { useStream } from "@langchain/langgraph-sdk/react";
-import type { Message } from "@langchain/langgraph-sdk";
-import { useState, useEffect, useRef, useCallback } from "react";
 import { ProcessedEvent } from "@/components/ActivityTimeline";
-import { WelcomeScreen } from "@/components/WelcomeScreen";
 import { ChatMessagesView } from "@/components/ChatMessagesView";
 import { Button } from "@/components/ui/button";
+import { WelcomeScreen } from "@/components/WelcomeScreen";
+import type { Message } from "@langchain/langgraph-sdk";
+import { useStream } from "@langchain/langgraph-sdk/react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export default function App() {
   const [processedEventsTimeline, setProcessedEventsTimeline] = useState<
@@ -100,8 +100,8 @@ export default function App() {
   }, [thread.messages, thread.isLoading, processedEventsTimeline]);
 
   const handleSubmit = useCallback(
-    (submittedInputValue: string, effort: string, model: string) => {
-      if (!submittedInputValue.trim()) return;
+    async (submittedInputValue: string, effort: string, model: string, images?: File[]) => {
+      if (!submittedInputValue.trim() && (!images || images.length === 0)) return;
       setProcessedEventsTimeline([]);
       hasFinalizeEventOccurredRef.current = false;
 
@@ -126,20 +126,70 @@ export default function App() {
           break;
       }
 
-      const newMessages: Message[] = [
-        ...(thread.messages || []),
-        {
-          type: "human",
-          content: submittedInputValue,
-          id: Date.now().toString(),
-        },
-      ];
-      thread.submit({
-        messages: newMessages,
-        initial_search_query_count: initial_search_query_count,
-        max_research_loops: max_research_loops,
-        reasoning_model: model,
-      });
+      // Create message content with images if provided
+      if (images && images.length > 0) {
+        // Convert images to base64 for Gemini API
+        const processImages = async () => {
+          const imagePromises = images.map(async (image) => {
+            return new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (e) => resolve(e.target?.result as string);
+              reader.readAsDataURL(image);
+            });
+          });
+          
+          const base64Images = await Promise.all(imagePromises);
+          
+          // Enhanced text with image information for backend processing
+          const contentWithImageInfo = images.length > 0 
+            ? `${submittedInputValue}\n\n[Note: ${images.length} image(s) uploaded for analysis]`
+            : submittedInputValue;
+
+          // Generate consistent message ID
+          const messageId = Date.now().toString();
+
+          // Create message with enhanced text content
+          const newMessages: Message[] = [
+            ...(thread.messages || []),
+            {
+              type: "human",
+              content: contentWithImageInfo,
+              id: messageId,
+            },
+          ];
+
+          // Store image data for frontend display purposes
+          if (images.length > 0) {
+            // Store images in sessionStorage for display (with cleanup)
+            sessionStorage.setItem(`message-images-${messageId}`, JSON.stringify(base64Images));
+          }
+
+          thread.submit({
+            messages: newMessages,
+            initial_search_query_count: initial_search_query_count,
+            max_research_loops: max_research_loops,
+            reasoning_model: model,
+            images: base64Images,
+          } as any);
+        };
+        
+        await processImages(); // ✅ Wait for image processing to complete
+      } else {
+        const newMessages: Message[] = [
+          ...(thread.messages || []),
+          {
+            type: "human",
+            content: submittedInputValue,
+            id: Date.now().toString(),
+          },
+        ];
+        thread.submit({
+          messages: newMessages,
+          initial_search_query_count: initial_search_query_count,
+          max_research_loops: max_research_loops,
+          reasoning_model: model,
+        });
+      }
     },
     [thread]
   );
